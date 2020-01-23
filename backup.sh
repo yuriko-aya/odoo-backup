@@ -41,7 +41,7 @@ fs_location="$odoo_data_dir/filestore/$db_name"
 backup_location="/opt/new-backup"
 mkdir -p $backup_location
 
-# Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage 
+# Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage
 storage_provider="gs"
 
 ## AWS S3 Config
@@ -85,7 +85,7 @@ then
     exit 1
 fi
 
-################################################################################## Functions for backup 
+################################################################################## Functions for backup
 
 ### Delete old backup on AWS S3
 # usage: delete_s3_old_backup folder to cleanup age(days)
@@ -126,7 +126,7 @@ delete_gs_old_backup() {
                 gsutil rm $file_name
             fi
         fi
-    done 
+    done
 }
 
 ### Delete old backup on Google Cloud Storage
@@ -192,7 +192,7 @@ cloud_sync() {
 }
 
 ### Backup Function
-# usage: backup_function "type(db or fs)" "backup_location(folder)" "backup_source(folder or db name if db type)" 
+# usage: backup_function "type(db or fs)" "backup_location(folder)" "backup_source(folder or db name if db type)"
 backup_function () {
     # if backup type Database
     today_day=$(date +%A)
@@ -245,7 +245,7 @@ backup_function () {
             else
                 echo "Deleting all backup from local($2)"
                 find "$2" -type f -delete
-            fi 
+            fi
         fi
     elif [ "$1" = "fs" ]
     then
@@ -296,7 +296,7 @@ backup_function () {
             else
                 echo "Deleting all backup from local($2)"
                 find "$2" -type f -delete
-            fi 
+            fi
         fi
     else
         echo "Error! Wrong type!"
@@ -325,11 +325,11 @@ fi
 
 ## BACKUP!!!!
 
-backup_function db $backup_location $db_name 
-# if backup database error then no backup filestore 
+backup_function db $backup_location $db_name
+# if backup database error then no backup filestore
 # exit if backup db error
 if [[ $? -ne 0 ]]
-then 
+then
     exit 1
 fi
 
