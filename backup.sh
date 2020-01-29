@@ -25,9 +25,10 @@ exec 1> >(add_date) 2>&1
 ############################################################################# Send email on error function
 # usage send_errormail "message"
 send_errormail () {
+    log_message="$(tail -n 30 $logfile)"
     # curl https://api.sendgrid.com/api/mail.send.json \
     # -F to= -F toname= -F subject="Autobackup failed" \
-    # -F text="$1" \
+    # -F text="$1 \nLog file (latest 30 lines):\n $log_message" \
     # -F from= -F api_user= -F api_key=
 
     echo $1 | mail -s "Autobackup Failed!" root@localhost
@@ -41,7 +42,7 @@ fs_location="$odoo_data_dir/filestore/$db_name"
 backup_location="/opt/new-backup"
 mkdir -p $backup_location
 
-# Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage
+# Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage and 'ovh' for OVH Object Storage
 storage_provider="gs"
 
 ## AWS S3 Config
@@ -50,6 +51,24 @@ s3_bucket="s3://"
 
 ## Google Cloud Storage Config
 gs_bucket="gs://"
+
+## OVH Object Storage config
+OS_AUTH_URL=https://auth.cloud.ovh.net/v3
+OS_PROJECT_ID=
+OS_PROJECT_NAME=
+OS_USER_DOMAIN_NAME="Default"
+if [ -z "$OS_USER_DOMAIN_NAME" ]; then unset OS_USER_DOMAIN_NAME; fi
+OS_PROJECT_DOMAIN_ID="default"
+if [ -z "$OS_PROJECT_DOMAIN_ID" ]; then unset OS_PROJECT_DOMAIN_ID; fi
+unset OS_TENANT_ID
+unset OS_TENANT_NAME
+OS_USERNAME=""
+OS_PASSWORD=""
+OS_REGION_NAME=""                                                    # Change to match region
+if [ -z "$OS_REGION_NAME" ]; then unset OS_REGION_NAME; fi
+OS_INTERFACE=public
+OS_IDENTITY_API_VERSION=
+object_storage=""                                                       # Object storage name
 
 ### Advanced config
 ## Backup type:
@@ -79,7 +98,7 @@ then
 fi
 
 ## Check if provider is known
-if [ "$storage_provider" != "gs" ] && [ "$storage_provider" != "s3" ]
+if [ "$storage_provider" != "gs" ] && [ "$storage_provider" != "s3" ] && [ "$storage_provider" != "ovh" ]
 then
     echo "Provider not known! Aborting!"
     exit 1
@@ -88,7 +107,7 @@ fi
 ################################################################################## Functions for backup
 
 ### Delete old backup on AWS S3
-# usage: delete_s3_old_backup folder to cleanup age(days)
+# usage: delete_s3_old_backup folder_to_cleanup age(days)
 # example: delete_s3_old_backup db/daily 30
 delete_s3_old_backup() {
     aws s3 --endpoint-url $s3_endpoint ls $s3_bucket/$1/ | grep " DIR " -v | while read -r line;
@@ -109,7 +128,7 @@ delete_s3_old_backup() {
 }
 
 ### Delete old backup on Google Cloud Storage
-# usage: delete_gs_old_backup( folder to cleanup age(days)
+# usage: delete_gs_old_backup folder_to_cleanup age(days)
 # example: delete_gs_old_backup db/daily 30
 delete_gs_old_backup() {
     gsutil ls -l $gs_bucket/$1 | grep "TOTAL" -v | while read -r line;
@@ -129,8 +148,27 @@ delete_gs_old_backup() {
     done
 }
 
-### Delete old backup on Google Cloud Storage
-# usage: delete_gs_old_backup( folder to cleanup age(days)
+### Delete old backup on OVH Object Storage
+delete_ovh_old_backup() {
+    swift list -l $ovh_bucket | head -n -1 | while read -r line;
+    do
+        create_date=$(echo $line | awk {'print $2" "$3'})
+        create_date=$(date -d "$create_date" +%s)
+        older_than=$(date -d "$2 day ago" +%s)
+        if [[ $create_date -lt $older_than ]]
+        then
+            file_name=`echo $line | awk {'print $5'}`
+            if [[ $file_name != "" ]]
+            then
+                printf 'Deleting "%s"\n' $file_name
+                swift delete $ovh_bucket
+            fi
+        fi
+   done
+}
+
+### Delete old backup on local storage
+# usage: delete_local_old_backup folder_to_cleanup age(days)
 # example: delete_local_old_backup /opt/backup/db/weekly 30
 delete_local_old_backup() {
     echo "Deleting $2 days old backup from $1"
@@ -140,6 +178,7 @@ delete_local_old_backup() {
 ## Upload compressed backup to cloud function
 # usage cloud_upload file destination_object(db/daily, db/monthly, etc) age_to_delete
 cloud_upload() {
+    # Upload to GS
     if [ "$storage_provider" = "gs" ]
     then
         echo "Uploading $1 to $gs_bucket/$2/"
@@ -152,6 +191,7 @@ cloud_upload() {
         fi
         echo "Deleting $3 days old backup from $gs_bucket/$2"
         delete_gs_old_backup $2 $3
+    # upload to AWS S3
     elif [ "$storage_provider" = 's3' ]
     then
         echo "Uploading $1 to $s3_bucket/$2"
@@ -164,6 +204,20 @@ cloud_upload() {
         fi
         echo "Deleting $3 days old backup from $s3_bucket/$2"
         delete_s3_old_backup $2 $3
+    fi
+    # Upload to OVH Object Storage
+    elif [ "$storage_manager" = "ovh" ]
+    then 
+        echo "Uploading $1 to OVH Object Storage $object_storage"
+        swift upload $object_storage $1
+        if [[ $? -ne 0 ]]
+        then
+            echo "Failed to upload to OVH Object Storage S3\nFile: $1"
+            send_errormail "Failed to upload to OVH Object Storage S3\nFile: $1"
+            return 1
+        fi
+        echo "Deleting $3 days old backup from $object_storage"
+        delete_ovh_old_backup "None" $3
     fi
 }
 
@@ -208,10 +262,10 @@ backup_function () {
             send_errormail "Backup failed! Failed to backup database $3"
             return 1
         fi
+        echo "Saving backup to daily backup directory"
+        mv "$2/$dbname" "$2/db/daily/"
         if [ "$backup_type" = "sync" ]
         then
-            echo "Saving backup to daily backup directory"
-            mv "$2/$dbname" "$2/db/daily/"
             echo "Deleting 7 days old backup from daily backup"
             delete_local_old_backup "$2/db/daily/" 7
             if [ "$today_day" = "Monday" ]
@@ -226,18 +280,20 @@ backup_function () {
                 echo "Saving backup to monthly backup directory"
                 cp "$2/db/daily/$dbname" "$2/db/monthly/"
                 echo "Deleting 90 days old backup from monthly backup directory"
-                delete_local_old_backup "$2/db/monthly/"
+                delete_local_old_backup "$2/db/monthly/" 89
             fi
             cloud_sync "db"
         else
-            cloud_upload "$2/$dbname" "db/daily" 6
+            cloud_upload "$2/db/daily/$dbname" "db/daily" 6
             if [ "$today_day" = "Monday" ]
             then
-                cloud_upload "$2/$dbname" "db/weekly" 29
+                cp "$2/db/daily/$dbname" "$2/db/weekly/"
+                cloud_upload "$2/db/weekly/$dbname" "db/weekly" 29
             fi
             if [ "$today_date" = "28" ]
             then
-                cloud_upload "$2/$dbname" "db/monthly" 89
+                cp "$2/db/daily/$dbname" "$2/db/monthly/"
+                cloud_upload "$2/db/monthly/$dbname" "db/monthly" 89
             fi
             if [ "$backup_type" = "partial" ]
             then
@@ -259,10 +315,10 @@ backup_function () {
             send_errormail "Backup failed! Failed to backup filestore $3"
             return 1
         fi
+        echo "Saving backup to daily backup directory"
+        mv "$2/$fsname" "$2/fs/daily/"
         if [ "$backup_type" = "sync" ]
         then
-            echo "Saving backup to daily backup directory"
-            mv "$2/$fsname" "$2/fs/daily/"
             echo "Deleting 7 days old backup from daily backup"
             delete_local_old_backup "$2/fs/daily/" 7
             if [ "$today_day" = "Monday" ]
@@ -277,18 +333,20 @@ backup_function () {
                 echo "Saving backup to monthly backup directory"
                 cp "$2/fs/daily/$fsname" "$2/fs/monthly/"
                 echo "Deleting 90 days old backup from monthly backup directory"
-                delete_local_old_backup "$2/fs/monthly/"
+                delete_local_old_backup "$2/fs/monthly/" 89
             fi
             cloud_sync "fs"
         else
-            cloud_upload "$2/$fsname" "fs/daily" 6
+            cloud_upload "$2/fs/daily/$fsname" "fs/daily" 6
             if [ "$today_day" = "Monday" ]
             then
-                cloud_upload "$2/$fsname" "fs/weekly" 29
+                cp "$2/fs/daily/$fsname" "$2/fs/weekly/"
+                cloud_upload "$2/fs/weekly/$fsname" "fs/weekly" 29
             fi
             if [ "$today_date" = "28" ]
             then
-                cloud_upload "$2/$fsname" "fs/monthly" 89
+                cp "$2/fs/daily/$fsname" "$2/fs/monthly/"
+                cloud_upload "$2/fs/monthly/$fsname" "fs/monthly" 89
             fi
             if [ "$backup_type" = "partial" ]
             then
@@ -307,11 +365,7 @@ backup_function () {
 ################################################################################# Start backup action
 
 ## Create directory if not exist, just in case
-# only if backup_type="sync"
-if [ "$backup_type" = "sync" ]
-then
-    mkdir -p $backup_location/{db,fs}/{daily,weekly,monthly}
-fi
+mkdir -p $backup_location/{db,fs}/{daily,weekly,monthly}
 
 ## Check database, exit if not exists
 # if db not found then there's no point to try to backup filestore
