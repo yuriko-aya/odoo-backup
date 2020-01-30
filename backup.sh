@@ -31,7 +31,7 @@ send_errormail () {
     # -F text="$1 \nLog file (latest 30 lines):\n $log_message" \
     # -F from= -F api_user= -F api_key=
 
-    echo $1 | mail -s "Autobackup Failed!" root@localhost
+    echo "$1 \nLog file (latest 30 lines):\n $log_message" | mail -s "Autobackup Failed!" admin@sanusi.id
 }
 
 ############################################################################ Bakcup Variables
@@ -50,7 +50,7 @@ s3_endpoint="https://"
 s3_bucket="s3://"
 
 ## Google Cloud Storage Config
-gs_bucket="gs://"
+gs_bucket="gs://sanusi-odoo"
 
 ## OVH Object Storage config
 OS_AUTH_URL=https://auth.cloud.ovh.net/v3
@@ -75,7 +75,7 @@ object_storage=""                                                       # Object
 # sync (default): full backup on local (7 daily, 4 weekly, and 3 monthly) and sync it to cloud
 # partial: full backup on the cloud but only few on local depends to local_age variable
 # cloud: cloud only backup, no local backup.
-backup_type="sync"
+backup_type="cloud"
 local_age="4"       # in days, required only if backup_type="partial"
 
 ############################################################################# Precheck for available disk space and Storage Provider
@@ -204,7 +204,6 @@ cloud_upload() {
         fi
         echo "Deleting $3 days old backup from $s3_bucket/$2"
         delete_s3_old_backup $2 $3
-    fi
     # Upload to OVH Object Storage
     elif [ "$storage_manager" = "ovh" ]
     then 
