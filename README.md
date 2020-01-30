@@ -8,6 +8,7 @@ Backup Odoo Database and Filestore
 - `gsutil` from Google Cloud SDK for Google Cloud Storage and configured by root user
 - `aws` from aws-cli for Amazon Web Service S3
 - `mail` from mailutils
+- `swift` from openstackclients for OVH Object Storage
 
 # Feature
 
@@ -42,3 +43,4 @@ Log is saved in `/var/log/backup/backup_script.log`
 
 - Google Cloud Storage 'gs'
 - Amazon Web Service S3 's3'
+- OVH Object Storage
