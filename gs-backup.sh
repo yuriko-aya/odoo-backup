@@ -1,11 +1,31 @@
 #!/bin/bash
 
+############################################################################ Bakcup Variables
+### Local location variable
+db_name="odoo13"
+odoo_data_dir="/opt/odoo/.local/share/Odoo" # must be same with data_dir in odoo config
+backup_location="/opt/new-backup"
+
+fs_location="$odoo_data_dir/filestore/$db_name"
+mkdir -p $backup_location
+
+## Google Cloud Storage Config
+gs_bucket="gs://"
+
+### Advanced config
+## Backup type:
+# sync (default): full backup on local (7 daily, 4 weekly, and 3 monthly) and sync it to cloud
+# partial: full backup on the cloud but only few on local depends to local_age variable
+# cloud: cloud only backup, no local backup.
+backup_type="cloud"
+local_age="4"       # in days, required only if backup_type="partial"
+
 ## PATH
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH
 
 ################################################################################## Logging
 # create logfile if not exist
-logfile="/var/log/backup/backup_script.log"
+logfile="/var/log/backup/gs_backup.log"
 if [ ! -e $logfile ]
 then
     mkdir -p "/var/log/backup/"
@@ -31,54 +51,10 @@ send_errormail () {
     # -F text="$1 \nLog file (latest 30 lines):\n $log_message" \
     # -F from= -F api_user= -F api_key=
 
-    echo "$1 \nLog file (latest 30 lines):\n $log_message" | mail -s "Autobackup Failed!" admin@sanusi.id
+    echo "$1 \nLog file (latest 30 lines):\n $log_message" | mail -s "Autobackup Failed!" root@localhost
 }
 
-############################################################################ Bakcup Variables
-### Local location variable
-db_name="odoo13"
-odoo_data_dir="/opt/odoo/.local/share/Odoo" # must be same with data_dir in odoo config
-fs_location="$odoo_data_dir/filestore/$db_name"
-backup_location="/opt/new-backup"
-mkdir -p $backup_location
-
-# Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage and 'ovh' for OVH Object Storage
-storage_provider="gs"
-
-## AWS S3 Config
-s3_endpoint="https://"
-s3_bucket="s3://"
-
-## Google Cloud Storage Config
-gs_bucket="gs://sanusi-odoo"
-
-## OVH Object Storage config
-OS_AUTH_URL=https://auth.cloud.ovh.net/v3
-OS_PROJECT_ID=
-OS_PROJECT_NAME=
-OS_USER_DOMAIN_NAME="Default"
-if [ -z "$OS_USER_DOMAIN_NAME" ]; then unset OS_USER_DOMAIN_NAME; fi
-OS_PROJECT_DOMAIN_ID="default"
-if [ -z "$OS_PROJECT_DOMAIN_ID" ]; then unset OS_PROJECT_DOMAIN_ID; fi
-unset OS_TENANT_ID
-unset OS_TENANT_NAME
-OS_USERNAME=""
-OS_PASSWORD=""
-OS_REGION_NAME=""                                                    # Change to match region
-if [ -z "$OS_REGION_NAME" ]; then unset OS_REGION_NAME; fi
-OS_INTERFACE=public
-OS_IDENTITY_API_VERSION=
-object_storage=""                                                       # Object storage name
-
-### Advanced config
-## Backup type:
-# sync (default): full backup on local (7 daily, 4 weekly, and 3 monthly) and sync it to cloud
-# partial: full backup on the cloud but only few on local depends to local_age variable
-# cloud: cloud only backup, no local backup.
-backup_type="cloud"
-local_age="4"       # in days, required only if backup_type="partial"
-
-############################################################################# Precheck for available disk space and Storage Provider
+############################################################################# Precheck for available disk space
 # Abort backup if disk space less than 20%
 # usage: check_disk folder
 # return number is percent disk usage
@@ -97,35 +73,7 @@ then
     exit 1
 fi
 
-## Check if provider is known
-if [ "$storage_provider" != "gs" ] && [ "$storage_provider" != "s3" ] && [ "$storage_provider" != "ovh" ]
-then
-    echo "Provider not known! Aborting!"
-    exit 1
-fi
-
 ################################################################################## Functions for backup
-
-### Delete old backup on AWS S3
-# usage: delete_s3_old_backup folder_to_cleanup age(days)
-# example: delete_s3_old_backup db/daily 30
-delete_s3_old_backup() {
-    aws s3 --endpoint-url $s3_endpoint ls $s3_bucket/$1/ | grep " DIR " -v | while read -r line;
-    do
-        create_date=$(echo $line | awk {'print $1" "$2'})
-        create_date=$(date -d "$create_date" +%s)
-        older_than=$(date -d "$2 day ago" +%s)
-        if [[ $create_date -lt $older_than ]]
-        then
-            file_name=`echo $line | awk {'print $4'}`
-            if [[ $file_name != "" ]]
-            then
-                printf 'Deleting "%s"\n' $file_name
-                aws s3 --endpoint-url $s3_endpoint rm $s3_bucket/$1/$file_name
-            fi
-        fi
-    done
-}
 
 ### Delete old backup on Google Cloud Storage
 # usage: delete_gs_old_backup folder_to_cleanup age(days)
@@ -148,25 +96,6 @@ delete_gs_old_backup() {
     done
 }
 
-### Delete old backup on OVH Object Storage
-delete_ovh_old_backup() {
-    swift list -l $ovh_bucket | head -n -1 | while read -r line;
-    do
-        create_date=$(echo $line | awk {'print $2" "$3'})
-        create_date=$(date -d "$create_date" +%s)
-        older_than=$(date -d "$2 day ago" +%s)
-        if [[ $create_date -lt $older_than ]]
-        then
-            file_name=`echo $line | awk {'print $5'}`
-            if [[ $file_name != "" ]]
-            then
-                printf 'Deleting "%s"\n' $file_name
-                swift delete $ovh_bucket
-            fi
-        fi
-   done
-}
-
 ### Delete old backup on local storage
 # usage: delete_local_old_backup folder_to_cleanup age(days)
 # example: delete_local_old_backup /opt/backup/db/weekly 30
@@ -179,68 +108,26 @@ delete_local_old_backup() {
 # usage cloud_upload file destination_object(db/daily, db/monthly, etc) age_to_delete
 cloud_upload() {
     # Upload to GS
-    if [ "$storage_provider" = "gs" ]
+    echo "Uploading $1 to $gs_bucket/$2/"
+    gsutil cp $1 $gs_bucket/$2/
+    if [[ $? -ne 0 ]]
     then
-        echo "Uploading $1 to $gs_bucket/$2/"
-        gsutil cp $1 $gs_bucket/$2/
-        if [[ $? -ne 0 ]]
-        then
-            echo "Failed to upload backup to Google Cloud Storage\nFile: $1\nDestination: $2"
-            send_errormail "Failed to upload backup to Google Cloud Storage\nFile: $1\nDestination: $2"
-            return 1
-        fi
-        echo "Deleting $3 days old backup from $gs_bucket/$2"
-        delete_gs_old_backup $2 $3
-    # upload to AWS S3
-    elif [ "$storage_provider" = 's3' ]
-    then
-        echo "Uploading $1 to $s3_bucket/$2"
-        aws s3 --endpoint-url $s3_endpoint cp $1 $s3_bucket/$2/
-        if [[ $? -ne 0 ]]
-        then
-            echo "Failed to upload to AWS S3\nFile: $1\nDestination: $2"
-            send_errormail "Failed to upload to AWS S3\nFile: $1\nDestination: $2"
-            return 1
-        fi
-        echo "Deleting $3 days old backup from $s3_bucket/$2"
-        delete_s3_old_backup $2 $3
-    # Upload to OVH Object Storage
-    elif [ "$storage_manager" = "ovh" ]
-    then 
-        echo "Uploading $1 to OVH Object Storage $object_storage"
-        swift upload $object_storage $1
-        if [[ $? -ne 0 ]]
-        then
-            echo "Failed to upload to OVH Object Storage S3\nFile: $1"
-            send_errormail "Failed to upload to OVH Object Storage S3\nFile: $1"
-            return 1
-        fi
-        echo "Deleting $3 days old backup from $object_storage"
-        delete_ovh_old_backup "None" $3
+        echo "Failed to upload backup to Google Cloud Storage\nFile: $1\nDestination: $2"
+        send_errormail "Failed to upload backup to Google Cloud Storage\nFile: $1\nDestination: $2"
+        return 1
     fi
+    echo "Deleting $3 days old backup from $gs_bucket/$2"
+    delete_gs_old_backup $2 $3
 }
 
 cloud_sync() {
-    if [ "$storage_provider" = "gs" ]
+    echo "Syncronize $backup_location/$1 to $gs_bucket/$1/"
+    gsutil -m rsync -d -r $backup_location/$1 $gs_bucket/$1/
+    if [[ $? -ne 0 ]]
     then
-        echo "Syncronize $backup_location/$1 to $gs_bucket/$1/"
-        gsutil -m rsync -d -r $backup_location/$1 $gs_bucket/$1/
-        if [[ $? -ne 0 ]]
-        then
-            echo "Failed syncronize $backup_location/$1 to Google Cloud Storage"
-            send_errormail "Failed syncronize $backup_location/$1 to Google Cloud Storage"
-            return 1
-        fi
-    elif [ "$storage_provider" = 's3' ]
-    then
-        echo "syncronize $backup_location/$1 to $s3_bucket/$1"
-        aws s3 --endpoint-url $s3_endpoint sync $backup_location/$1 $s3_bucket/$1/
-        if [[ $? -ne 0 ]]
-        then
-            echo "Failed to syncronize $backup_location to AWS S3"
-            send_errormail "Failed to syncronize $backup_location to AWS S3"
-            return 1
-        fi
+        echo "Failed syncronize $backup_location/$1 to Google Cloud Storage"
+        send_errormail "Failed syncronize $backup_location/$1 to Google Cloud Storage"
+        return 1
     fi
 }
 
@@ -379,6 +266,7 @@ fi
 ## BACKUP!!!!
 
 backup_function db $backup_location $db_name
+
 # if backup database error then no backup filestore
 # exit if backup db error
 if [[ $? -ne 0 ]]
