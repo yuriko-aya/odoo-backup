@@ -191,9 +191,8 @@ backup_function () {
         fi
     elif [ "$1" = "fs" ]
     then
-        dirname="$(basename $3)"
-        fsname="$dirname-$(date +%Y-%m-%d).tar.gz"
-        echo "Backuping filestore $dirname to $2"
+        fsname="$db_name-$(date +%Y-%m-%d).tar.gz"
+        echo "Backuping filestore $db_name to $2"
         sudo tar zcf "$2/$fsname" "$3"
         if [[ $? -ne 0 ]]
         then
