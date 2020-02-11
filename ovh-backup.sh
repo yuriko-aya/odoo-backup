@@ -113,7 +113,7 @@ delete_ovh_old_backup() {
 # example: delete_local_old_backup /opt/backup/db/weekly 30
 delete_local_old_backup() {
     echo "Deleting $2 days old backup from $1"
-    find "$1" -type f -mtime +$2 -delete
+    find "$1" -type f -mtime +$2 ! -name "*.sh" -delete
 }
 
 ## Upload compressed backup to cloud function
@@ -166,7 +166,7 @@ backup_function () {
             delete_local_old_backup "$2" "$local_age"
         else
             echo "Deleting all backup from local($2)"
-            find "$2" -type f -delete
+            find "$2" -type f ! -name "*.sh" -delete
         fi
     elif [ "$1" = "fs" ]
     then
@@ -198,7 +198,7 @@ backup_function () {
             delete_local_old_backup "$2" "$local_age"
         else
             echo "Deleting all backup from local($2)"
-            find "$2" -type f -delete
+            find "$2" -type f ! -name "*.sh" -delete
         fi
     else
         echo "Error! Wrong type!"
