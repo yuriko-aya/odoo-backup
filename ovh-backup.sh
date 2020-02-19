@@ -90,8 +90,8 @@ fi
 ################################################################################## Functions for backup
 
 ### Delete old backup on OVH Object Storage
-# usage: delete_gs_old_backup folder_to_cleanup age(days)
-# example: delete_gs_old_backup db/daily 30
+# usage: delete_ovh_old_backup bucket age(days)
+# example: delete_ovh_old_backup some-bucket-names 30
 
 delete_ovh_old_backup() {
     swift list -l $ovh_bucket | head -n -1 | while read -r line;
