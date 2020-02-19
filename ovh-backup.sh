@@ -102,7 +102,7 @@ delete_ovh_old_backup() {
             if [[ $file_name != "" ]]
             then
                 printf 'Deleting "%s"\n' $file_name
-                swift delete $filename
+                swift delete $ovh_bucket $file_name
             fi
         fi
    done
