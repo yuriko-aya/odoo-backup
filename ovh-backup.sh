@@ -3,15 +3,15 @@
 ############################################################################ Bakcup Variables
 ### Local location variable
 db_name="odoo13"
-odoo_data_dir="/opt/odoo/.local/share/Odoo" # must be same with data_dir in odoo config
+odoo_data_dir="/opt/odoo/.local/share/odoo" # must be same with data_dir in odoo config
 fs_location="$odoo_data_dir/filestore/$db_name"
-backup_location="/opt/new-backup"
+backup_location="/opt/backup"
 mkdir -p $backup_location
 
 ## OVH Object Storage config
 OS_AUTH_URL=https://auth.cloud.ovh.net/v3
 OS_PROJECT_ID=
-OS_PROJECT_NAME=
+OS_PROJECT_NAME=""
 OS_USER_DOMAIN_NAME="Default"
 if [ -z "$OS_USER_DOMAIN_NAME" ]; then unset OS_USER_DOMAIN_NAME; fi
 OS_PROJECT_DOMAIN_ID="default"
@@ -23,7 +23,7 @@ OS_PASSWORD=""
 OS_REGION_NAME=""                                                    # Change to match region
 if [ -z "$OS_REGION_NAME" ]; then unset OS_REGION_NAME; fi
 OS_INTERFACE=public
-OS_IDENTITY_API_VERSION=
+OS_IDENTITY_API_VERSION=3
 object_storage=""                                                       # Object storage name
 
 ### Advanced config
@@ -31,11 +31,21 @@ object_storage=""                                                       # Object
 # sync (default): full backup on local (7 daily, 4 weekly, and 3 monthly) and sync it to cloud
 # partial: full backup on the cloud but only few on local depends to local_age variable
 # cloud: cloud only backup, no local backup.
-backup_type="cloud"
-local_age="4"       # in days, required only if backup_type="partial"
+backup_type="partial"
+local_age="7"       # in days, required only if backup_type="partial"
 
 ## PATH
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH
+
+#Authenticate
+
+swift auth
+if [[ $? -ne 0 ]]
+then
+    echo "Wrong auth!"
+    exit 1
+fi
+
 
 ################################################################################## Logging
 # create logfile if not exist
@@ -61,7 +71,7 @@ exec 1> >(add_date) 2>&1
 send_errormail () {
     log_message="$(tail -n 30 $logfile)"
     # curl https://api.sendgrid.com/api/mail.send.json \
-    # -F to= -F toname= -F subject="Autobackup failed" \
+    # -F to= -F toname="" -F subject="Autobackup failed" \
     # -F text="$1 \nLog file (latest 30 lines):\n $log_message" \
     # -F from= -F api_user= -F api_key=
 
@@ -94,7 +104,7 @@ fi
 # example: delete_ovh_old_backup fs/daily 30
 
 delete_ovh_old_backup() {
-    swift list -l $ovh_bucket | head -n -1 | while read -r line;
+    swift list -l $ovh_bucket | head -n -1 | grep $1 |while read -r line;
     do
         create_date=$(echo $line | awk {'print $2" "$3'})
         create_date=$(date -d "$create_date" +%s)
@@ -116,7 +126,7 @@ delete_ovh_old_backup() {
 # example: delete_local_old_backup /opt/backup/db/weekly 30
 delete_local_old_backup() {
     echo "Deleting $2 days old backup from $1"
-    find "$1" -type f -mtime +$2 ! -name "*.sh" -delete
+    find "$1" -type f -mtime +$2 ! -name "*.sh" -print -delete
 }
 
 ## Upload compressed backup to cloud function
@@ -128,10 +138,10 @@ cloud_upload() {
     then
         echo "Failed to upload to OVH Object Storage S3\nFile: $1"
         send_errormail "Failed to upload to OVH Object Storage S3\nFile: $1"
-        return 1
+        exit 1
     fi
     echo "Deleting $3 days old backup from $object_storage"
-    delete_ovh_old_backup "None" $3
+    delete_ovh_old_backup $2 $3
 }
 
 ### Backup Function
@@ -149,11 +159,11 @@ backup_function () {
         then
             echo "Backup failed! Failed to backup database $3"
             send_errormail "Backup failed! Failed to backup database $3"
-            return 1
+            exit 1
         fi
         echo "Saving backup to daily backup directory"
         mv "$2/$dbname" "$2/db/daily/"
-        cloud_upload "$2/db/daily/$dbname" "db/daily" 6
+        cloud_upload "$2/db/daily/$dbname" "db/daily" 7
         if [ "$today_day" = "Monday" ]
         then
             cp "$2/db/daily/$dbname" "$2/db/weekly/"
@@ -181,7 +191,7 @@ backup_function () {
         then
             echo "Backup failed! Failed to backup filestore $3"
             send_errormail "Backup failed! Failed to backup filestore $3"
-            return 1
+            exit 1
         fi
         echo "Saving backup to daily backup directory"
         mv "$2/$fsname" "$2/fs/daily/"
@@ -201,7 +211,7 @@ backup_function () {
             delete_local_old_backup "$2" "$local_age"
         else
             echo "Deleting all backup from local($2)"
-            find "$2" -type f ! -name "*.sh" -delete
+            find "$2" -type f ! -name "*.sh" -print -delete
         fi
     else
         echo "Error! Wrong type!"
