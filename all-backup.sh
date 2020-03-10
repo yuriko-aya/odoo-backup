@@ -5,7 +5,7 @@
 db_name="odoo13"
 odoo_data_dir="/opt/odoo/.local/share/Odoo" # must be same with data_dir in odoo config
 fs_location="$odoo_data_dir/filestore/$db_name"
-backup_location="/opt/new-backup"
+backup_location="/opt/backup"
 mkdir -p $backup_location
 
 # Storage provider, "s3" for AWS S3 or "gs" for Google Cloud Storage and 'ovh' for OVH Object Storage
@@ -41,8 +41,8 @@ object_storage=""                                                       # Object
 # sync (default): full backup on local (7 daily, 4 weekly, and 3 monthly) and sync it to cloud
 # partial: full backup on the cloud but only few on local depends to local_age variable
 # cloud: cloud only backup, no local backup.
-backup_type="cloud"
-local_age="4"       # in days, required only if backup_type="partial"
+backup_type="partial"
+local_age="7"       # in days, required only if backup_type="partial"
 
 ## PATH
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH
@@ -272,7 +272,7 @@ backup_function () {
                 echo "Saving backup to weekly backup directory"
                 cp "$2/db/daily/$dbname" "$2/db/weekly/"
                 echo "Deleteing 30 days old backup from weekly backup directory"
-                delete_local_old_backup "$2/db/weekly/" 30
+                delete_local_old_backup "$2/db/weekly/" 28
             fi
             if [ "$today_date" = "28" ]
             then
@@ -283,11 +283,11 @@ backup_function () {
             fi
             cloud_sync "db"
         else
-            cloud_upload "$2/db/daily/$dbname" "db/daily" 6
+            cloud_upload "$2/db/daily/$dbname" "db/daily" 7
             if [ "$today_day" = "Monday" ]
             then
                 cp "$2/db/daily/$dbname" "$2/db/weekly/"
-                cloud_upload "$2/db/weekly/$dbname" "db/weekly" 29
+                cloud_upload "$2/db/weekly/$dbname" "db/weekly" 28
             fi
             if [ "$today_date" = "28" ]
             then
@@ -325,7 +325,7 @@ backup_function () {
                 echo "Saving backup to weekly backup directory"
                 cp "$2/fs/daily/$fsname" "$2/fs/weekly/"
                 echo "Deleteing 30 days old backup from weekly backup directory"
-                delete_local_old_backup "$2/fs/weekly/" 30
+                delete_local_old_backup "$2/fs/weekly/" 28
             fi
             if [ "$today_date" = "28" ]
             then
@@ -336,11 +336,11 @@ backup_function () {
             fi
             cloud_sync "fs"
         else
-            cloud_upload "$2/fs/daily/$fsname" "fs/daily" 6
+            cloud_upload "$2/fs/daily/$fsname" "fs/daily" 7
             if [ "$today_day" = "Monday" ]
             then
                 cp "$2/fs/daily/$fsname" "$2/fs/weekly/"
-                cloud_upload "$2/fs/weekly/$fsname" "fs/weekly" 29
+                cloud_upload "$2/fs/weekly/$fsname" "fs/weekly" 28
             fi
             if [ "$today_date" = "28" ]
             then

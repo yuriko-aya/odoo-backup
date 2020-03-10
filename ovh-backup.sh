@@ -9,6 +9,7 @@ backup_location="/opt/backup"
 mkdir -p $backup_location
 
 ## OVH Object Storage config
+source /opt/backup/openrc.sh
 OS_AUTH_URL=https://auth.cloud.ovh.net/v3
 OS_PROJECT_ID=
 OS_PROJECT_NAME=""
@@ -167,7 +168,7 @@ backup_function () {
         if [ "$today_day" = "Monday" ]
         then
             cp "$2/db/daily/$dbname" "$2/db/weekly/"
-            cloud_upload "$2/db/weekly/$dbname" "db/weekly" 29
+            cloud_upload "$2/db/weekly/$dbname" "db/weekly" 28
         fi
         if [ "$today_date" = "28" ]
         then
@@ -195,11 +196,11 @@ backup_function () {
         fi
         echo "Saving backup to daily backup directory"
         mv "$2/$fsname" "$2/fs/daily/"
-        cloud_upload "$2/fs/daily/$fsname" "fs/daily" 6
+        cloud_upload "$2/fs/daily/$fsname" "fs/daily" 7
         if [ "$today_day" = "Monday" ]
         then
             cp "$2/fs/daily/$fsname" "$2/fs/weekly/"
-            cloud_upload "$2/fs/weekly/$fsname" "fs/weekly" 29
+            cloud_upload "$2/fs/weekly/$fsname" "fs/weekly" 28
         fi
         if [ "$today_date" = "28" ]
         then
